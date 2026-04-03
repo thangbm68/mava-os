@@ -1,8 +1,3 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Get a free hosted Postgres database in seconds: `npx create-db`
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -12,20 +7,467 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// ============================================================
+// CORE: Users, Departments, Roles
+// ============================================================
+
+model Department {
+  id          Int       @id @default(autoincrement())
+  name        String    @unique
+  description String?
+  color       String?   @default("#6366f1")
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  users        User[]
+  boards       Board[]
+  channels     Channel[]
+  kpiRecords   KpiRecord[]
+}
+
 model User {
-  id         Int       @id @default(autoincrement())
-  name       String
-  email      String    @unique
-  password   String
-  role       Role      @default(STAFF)
-  department String?
-  isActive   Boolean   @default(true)
-  createdAt  DateTime  @default(now())
-  updatedAt  DateTime  @updatedAt
+  id           Int        @id @default(autoincrement())
+  name         String
+  email        String     @unique
+  password     String
+  avatar       String?
+  role         Role       @default(STAFF)
+  position     String?
+  phone        String?
+  isActive     Boolean    @default(true)
+  lastSeenAt   DateTime?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  departmentId Int?
+  department   Department? @relation(fields: [departmentId], references: [id])
+
+  // Task relations
+  tasksCreated    Task[]         @relation("TaskCreator")
+  tasksAssigned   TaskAssignee[]
+  taskComments    TaskComment[]
+
+  // Chat relations
+  channelMemberships ChannelMember[]
+  messagesSent       Message[]
+  dmParticipant1     DirectMessage[] @relation("DmUser1")
+  dmParticipant2     DirectMessage[] @relation("DmUser2")
+  directMessages     DirectMessageLine[]
+
+  // HR relations
+  attendances    Attendance[]
+  leaveRequests  LeaveRequest[]
+  kpiRecords     KpiRecord[]
+
+  // Finance
+  transactions   Transaction[]
+
+  // Notifications
+  notifications  Notification[]
 }
 
 enum Role {
+  SUPER_ADMIN
   ADMIN
   MANAGER
   STAFF
+}
+
+// ============================================================
+// TASKS: Kanban Board (like Mattermost Board)
+// ============================================================
+
+model Board {
+  id           Int       @id @default(autoincrement())
+  name         String
+  description  String?
+  color        String?   @default("#6366f1")
+  isActive     Boolean   @default(true)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  departmentId Int?
+  department   Department? @relation(fields: [departmentId], references: [id])
+
+  columns      Column[]
+}
+
+model Column {
+  id        Int      @id @default(autoincrement())
+  name      String
+  order     Int      @default(0)
+  color     String?
+  createdAt DateTime @default(now())
+
+  boardId Int
+  board   Board @relation(fields: [boardId], references: [id], onDelete: Cascade)
+
+  tasks Task[]
+}
+
+model Task {
+  id          Int          @id @default(autoincrement())
+  title       String
+  description String?
+  priority    Priority     @default(MEDIUM)
+  status      TaskStatus   @default(TODO)
+  dueDate     DateTime?
+  order       Int          @default(0)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  columnId  Int
+  column    Column @relation(fields: [columnId], references: [id], onDelete: Cascade)
+
+  creatorId Int
+  creator   User @relation("TaskCreator", fields: [creatorId], references: [id])
+
+  assignees  TaskAssignee[]
+  comments   TaskComment[]
+  tags       TaskTag[]
+}
+
+model TaskAssignee {
+  taskId    Int
+  userId    Int
+  assignedAt DateTime @default(now())
+
+  task Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([taskId, userId])
+}
+
+model TaskComment {
+  id        Int      @id @default(autoincrement())
+  content   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  taskId Int
+  task   Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  userId Int
+  user   User @relation(fields: [userId], references: [id])
+}
+
+model TaskTag {
+  id    Int    @id @default(autoincrement())
+  name  String
+  color String @default("#6366f1")
+
+  taskId Int
+  task   Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+}
+
+enum Priority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum TaskStatus {
+  TODO
+  IN_PROGRESS
+  URGENT
+  DONE
+}
+
+// ============================================================
+// CHAT: Channels, DMs, Messages (like Mattermost/Discord)
+// ============================================================
+
+model Channel {
+  id          Int         @id @default(autoincrement())
+  name        String
+  description String?
+  type        ChannelType @default(PUBLIC)
+  isActive    Boolean     @default(true)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  departmentId Int?
+  department   Department? @relation(fields: [departmentId], references: [id])
+
+  members  ChannelMember[]
+  messages Message[]
+}
+
+model ChannelMember {
+  channelId  Int
+  userId     Int
+  role       ChannelRole @default(MEMBER)
+  joinedAt   DateTime    @default(now())
+  lastReadAt DateTime?
+
+  channel Channel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([channelId, userId])
+}
+
+model Message {
+  id        Int      @id @default(autoincrement())
+  content   String
+  type      MessageType @default(TEXT)
+  fileUrl   String?
+  isEdited  Boolean  @default(false)
+  isDeleted Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  channelId Int
+  channel   Channel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+
+  senderId Int
+  sender   User @relation(fields: [senderId], references: [id])
+
+  parentId Int?
+  parent   Message?  @relation("ThreadMessages", fields: [parentId], references: [id])
+  replies  Message[] @relation("ThreadMessages")
+
+  reactions MessageReaction[]
+}
+
+model MessageReaction {
+  id        Int      @id @default(autoincrement())
+  emoji     String
+  userId    Int
+  messageId Int
+  createdAt DateTime @default(now())
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, messageId, emoji])
+}
+
+model DirectMessage {
+  id        Int      @id @default(autoincrement())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user1Id Int
+  user1   User @relation("DmUser1", fields: [user1Id], references: [id])
+
+  user2Id Int
+  user2   User @relation("DmUser2", fields: [user2Id], references: [id])
+
+  lines DirectMessageLine[]
+
+  @@unique([user1Id, user2Id])
+}
+
+model DirectMessageLine {
+  id        Int      @id @default(autoincrement())
+  content   String
+  type      MessageType @default(TEXT)
+  fileUrl   String?
+  isRead    Boolean  @default(false)
+  isDeleted Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  dmId     Int
+  dm       DirectMessage @relation(fields: [dmId], references: [id], onDelete: Cascade)
+
+  senderId Int
+  sender   User @relation(fields: [senderId], references: [id])
+}
+
+enum ChannelType {
+  PUBLIC
+  PRIVATE
+  DEPARTMENT
+  ANNOUNCEMENT
+}
+
+enum ChannelRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+enum MessageType {
+  TEXT
+  IMAGE
+  FILE
+  SYSTEM
+  TASK_LINK
+}
+
+// ============================================================
+// HR: Attendance, Leave, KPI
+// ============================================================
+
+model Attendance {
+  id         Int              @id @default(autoincrement())
+  date       DateTime         @db.Date
+  checkIn    DateTime?
+  checkOut   DateTime?
+  status     AttendanceStatus @default(PRESENT)
+  note       String?
+  createdAt  DateTime         @default(now())
+
+  userId Int
+  user   User @relation(fields: [userId], references: [id])
+
+  @@unique([userId, date])
+}
+
+model LeaveRequest {
+  id          Int         @id @default(autoincrement())
+  type        LeaveType
+  startDate   DateTime    @db.Date
+  endDate     DateTime    @db.Date
+  reason      String
+  status      LeaveStatus @default(PENDING)
+  approvedBy  Int?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  userId Int
+  user   User @relation(fields: [userId], references: [id])
+}
+
+model KpiRecord {
+  id          Int      @id @default(autoincrement())
+  month       Int
+  year        Int
+  score       Float
+  target      Float
+  description String?
+  createdAt   DateTime @default(now())
+
+  userId       Int
+  user         User        @relation(fields: [userId], references: [id])
+  departmentId Int?
+  department   Department? @relation(fields: [departmentId], references: [id])
+
+  @@unique([userId, month, year])
+}
+
+enum AttendanceStatus {
+  PRESENT
+  ABSENT
+  LATE
+  EARLY_LEAVE
+  REMOTE
+  HOLIDAY
+  ON_LEAVE
+}
+
+enum LeaveType {
+  ANNUAL
+  SICK
+  PERSONAL
+  MATERNITY
+  OTHER
+}
+
+enum LeaveStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+// ============================================================
+// FINANCE: Transactions, Categories, Invoices
+// ============================================================
+
+model TransactionCategory {
+  id          Int             @id @default(autoincrement())
+  name        String
+  type        TransactionType
+  color       String          @default("#6366f1")
+  icon        String?
+  isActive    Boolean         @default(true)
+
+  transactions Transaction[]
+}
+
+model Transaction {
+  id          Int             @id @default(autoincrement())
+  title       String
+  amount      Decimal         @db.Decimal(18, 2)
+  type        TransactionType
+  date        DateTime        @db.Date
+  description String?
+  reference   String?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  categoryId Int
+  category   TransactionCategory @relation(fields: [categoryId], references: [id])
+
+  createdById Int
+  createdBy   User @relation(fields: [createdById], references: [id])
+}
+
+model Invoice {
+  id          Int           @id @default(autoincrement())
+  number      String        @unique
+  clientName  String
+  clientEmail String?
+  amount      Decimal       @db.Decimal(18, 2)
+  tax         Decimal       @db.Decimal(18, 2) @default(0)
+  total       Decimal       @db.Decimal(18, 2)
+  status      InvoiceStatus @default(DRAFT)
+  issueDate   DateTime      @db.Date
+  dueDate     DateTime      @db.Date
+  note        String?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  items InvoiceItem[]
+}
+
+model InvoiceItem {
+  id          Int     @id @default(autoincrement())
+  description String
+  quantity    Int
+  unitPrice   Decimal @db.Decimal(18, 2)
+  total       Decimal @db.Decimal(18, 2)
+
+  invoiceId Int
+  invoice   Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+}
+
+enum TransactionType {
+  INCOME
+  EXPENSE
+}
+
+enum InvoiceStatus {
+  DRAFT
+  SENT
+  PAID
+  OVERDUE
+  CANCELLED
+}
+
+// ============================================================
+// NOTIFICATIONS
+// ============================================================
+
+model Notification {
+  id        Int              @id @default(autoincrement())
+  title     String
+  content   String
+  type      NotificationType @default(SYSTEM)
+  isRead    Boolean          @default(false)
+  link      String?
+  createdAt DateTime         @default(now())
+
+  userId Int
+  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+enum NotificationType {
+  SYSTEM
+  TASK
+  CHAT
+  HR
+  FINANCE
 }

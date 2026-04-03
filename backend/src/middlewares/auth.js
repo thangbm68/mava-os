@@ -1,21 +1,21 @@
 const jwt = require('jsonwebtoken');
+const { unauthorized, forbidden } = require('../utils/response');
 
 const auth = (req, res, next) => {
   const token = req.headers.authorization?.split(' ')[1];
-  if (!token) return res.status(401).json({ message: 'Không có token' });
+  if (!token) return unauthorized(res, 'Không có token');
 
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = decoded;
+    req.user = jwt.verify(token, process.env.JWT_SECRET);
     next();
   } catch {
-    res.status(401).json({ message: 'Token không hợp lệ' });
+    unauthorized(res, 'Token không hợp lệ hoặc đã hết hạn');
   }
 };
 
 const requireRole = (...roles) => (req, res, next) => {
   if (!roles.includes(req.user.role)) {
-    return res.status(403).json({ message: 'Không có quyền truy cập' });
+    return forbidden(res, 'Không có quyền thực hiện hành động này');
   }
   next();
 };
